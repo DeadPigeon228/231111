@@ -568,14 +568,14 @@
             <button id="resetBtn"><i class="fas fa-redo"></i> Сбросить все данные</button>
             <button id="addPlayerBtn"><i class="fas fa-plus"></i> Добавить игрока</button>
             <button id="saveBtn"><i class="fas fa-save"></i> Сохранить в Firebase</button>
-            <div class="status">Изменения: <span id="lastSync" class="sync-status">не сохранены</span></div>
+            <div class="status">Статус: <span id="lastSync" class="sync-status">загрузка...</span></div>
         </div>
         
         <div class="artifacts-library">
             <h3>Библиотека артефактов</h3>
             <p style="text-align: center; margin-bottom: 15px; color: rgba(255,255,255,0.6);">Перетащите артефакты в слоты игроков</p>
             <div class="artifacts-grid" id="artifactsGrid">
-                <!-- Артефакты с 1 по 44 будут добавлены здесь -->
+                <!-- Артефакты с 1 по 44 будут добавлены скриптом -->
             </div>
         </div>
         
@@ -587,7 +587,7 @@
         </div>
     </div>
 
-    <div class="sync-notification" id="syncNotification">Данные синхронизированы!</div>
+    <div class="sync-notification" id="syncNotification">Данные сохранены в Firebase!</div>
 
     <!-- Подключаем Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
@@ -603,10 +603,9 @@
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
         
-        // Ключи для localStorage
-        const STORAGE_KEY = 'playersArtifactsSystem_v8';
-        const GENERAL_NOTES_KEY = 'generalNotes_v4';
-        const LAST_SYNC_KEY = 'lastSync_v4';
+        // Глобальные переменные
+        let players = [];
+        let isDataLoaded = false;
         
         // Создаем начальные данные для 20 игроков
         function createInitialPlayers() {
@@ -614,7 +613,7 @@
             for (let i = 1; i <= 20; i++) {
                 players.push({
                     id: i,
-                    name: "",
+                    name: `Игрок ${i}`,
                     link: "",
                     artifacts: Array(6).fill(null),
                     issued: null,
@@ -624,39 +623,63 @@
             return players;
         }
         
-        // Загружаем данные из Firebase или создаем начальные
-        function loadData(callback) {
-            database.ref('data').once('value').then((snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    document.getElementById('generalNotes').value = data.generalNotes || "";
-                    document.getElementById('lastSync').textContent = "загружены из Firebase";
-                    callback(data.players || createInitialPlayers());
-                } else {
-                    callback(createInitialPlayers());
-                }
-            }).catch((error) => {
-                console.error("Ошибка загрузки данных:", error);
-                callback(createInitialPlayers());
+        // Загружаем данные из Firebase
+        function loadData() {
+            document.getElementById('lastSync').textContent = "загрузка...";
+            
+            return new Promise((resolve) => {
+                database.ref('data').once('value').then((snapshot) => {
+                    const data = snapshot.val();
+                    
+                    if (data && data.players) {
+                        players = data.players;
+                        document.getElementById('generalNotes').value = data.generalNotes || "";
+                        document.getElementById('lastSync').textContent = "данные загружены";
+                        console.log("Данные загружены из Firebase");
+                    } else {
+                        // Если данных нет, создаем начальные
+                        players = createInitialPlayers();
+                        document.getElementById('lastSync').textContent = "созданы начальные данные";
+                        console.log("Созданы начальные данные");
+                        // Сохраняем начальные данные
+                        saveData();
+                    }
+                    
+                    isDataLoaded = true;
+                    renderPlayers();
+                    resolve();
+                }).catch((error) => {
+                    console.error("Ошибка загрузки данных:", error);
+                    players = createInitialPlayers();
+                    document.getElementById('lastSync').textContent = "ошибка загрузки";
+                    isDataLoaded = true;
+                    renderPlayers();
+                    resolve();
+                });
             });
         }
         
-        // Сохраняем текущие данные в Firebase
-        function saveToFirebase() {
+        // Сохраняем данные в Firebase
+        function saveData() {
+            if (!isDataLoaded) return;
+            
             const data = {
                 players: players,
                 generalNotes: document.getElementById('generalNotes').value,
                 timestamp: Date.now()
             };
             
+            document.getElementById('lastSync').textContent = "сохранение...";
+            
             database.ref('data').set(data)
                 .then(() => {
                     showSyncNotification();
-                    document.getElementById('lastSync').textContent = "сохранено в Firebase";
+                    document.getElementById('lastSync').textContent = "данные сохранены";
                     console.log("Данные успешно сохранены в Firebase");
                 })
                 .catch((error) => {
                     console.error("Ошибка сохранения данных:", error);
+                    document.getElementById('lastSync').textContent = "ошибка сохранения";
                 });
         }
         
@@ -665,9 +688,8 @@
             if (confirm('Вы уверены, что хотите сбросить ВСЕ данные? Все ники, артефакты и заметки будут удалены.')) {
                 players = createInitialPlayers();
                 document.getElementById('generalNotes').value = "";
-                document.getElementById('lastSync').textContent = "не сохранены";
                 renderPlayers();
-                saveToFirebase();
+                saveData();
             }
         }
         
@@ -676,14 +698,14 @@
             const newId = players.length > 0 ? Math.max(...players.map(p => p.id)) + 1 : 1;
             players.push({
                 id: newId,
-                name: "",
+                name: `Игрок ${newId}`,
                 link: "",
                 artifacts: Array(6).fill(null),
                 issued: null,
                 notes: ""
             });
             renderPlayers();
-            document.getElementById('lastSync').textContent = "не сохранены";
+            document.getElementById('lastSync').textContent = "не сохранено";
         }
         
         // Удаляем игрока
@@ -691,7 +713,7 @@
             if (confirm('Вы уверены, что хотите удалить этого игрока?')) {
                 players = players.filter(p => p.id !== playerId);
                 renderPlayers();
-                document.getElementById('lastSync').textContent = "не сохранены";
+                document.getElementById('lastSync').textContent = "не сохранено";
             }
         }
         
@@ -725,7 +747,7 @@
                 nameInput.addEventListener('input', (e) => {
                     player.name = e.target.value;
                     updatePlayerLink(player);
-                    document.getElementById('lastSync').textContent = "не сохранены";
+                    document.getElementById('lastSync').textContent = "не сохранено";
                 });
                 
                 const linkContainer = document.createElement('div');
@@ -738,7 +760,7 @@
                 linkInput.value = player.link;
                 linkInput.addEventListener('input', (e) => {
                     player.link = e.target.value;
-                    document.getElementById('lastSync').textContent = "не сохранены";
+                    document.getElementById('lastSync').textContent = "не сохранено";
                 });
                 
                 const link = document.createElement('a');
@@ -804,7 +826,7 @@
                     player.issued = true;
                     yesBtn.classList.add('active');
                     noBtn.classList.remove('active');
-                    document.getElementById('lastSync').textContent = "не сохранены";
+                    document.getElementById('lastSync').textContent = "не сохранено";
                 });
                 
                 const noBtn = document.createElement('button');
@@ -814,7 +836,7 @@
                     player.issued = false;
                     noBtn.classList.add('active');
                     yesBtn.classList.remove('active');
-                    document.getElementById('lastSync').textContent = "не сохранены";
+                    document.getElementById('lastSync').textContent = "не сохранено";
                 });
                 
                 issuedButtons.appendChild(yesBtn);
@@ -840,7 +862,7 @@
                 notesInput.value = player.notes || '';
                 notesInput.addEventListener('input', (e) => {
                     player.notes = e.target.value;
-                    document.getElementById('lastSync').textContent = "не сохранены";
+                    document.getElementById('lastSync').textContent = "не сохранено";
                 });
                 
                 notesContainer.appendChild(notesLabel);
@@ -900,7 +922,7 @@
                     empty.textContent = 'Перетащите артефакт';
                     slot.appendChild(empty);
                     
-                    document.getElementById('lastSync').textContent = "не сохранены";
+                    document.getElementById('lastSync').textContent = "не сохранено";
                 }
             }
         }
@@ -1038,7 +1060,7 @@
                 }
             }
             
-            document.getElementById('lastSync').textContent = "не сохранены";
+            document.getElementById('lastSync').textContent = "не сохранено";
         }
         
         // Показываем уведомление о синхронизации
@@ -1050,13 +1072,11 @@
             }, 3000);
         }
         
-        // Загружаем данные
-        let players = [];
-        
-        // Инициализация страницы
-        document.addEventListener('DOMContentLoaded', async () => {
-            // Создаем артефакты в библиотеке (1-44)
+        // Создаем артефакты в библиотеке
+        function createArtifactsLibrary() {
             const artifactsGrid = document.getElementById('artifactsGrid');
+            artifactsGrid.innerHTML = '';
+            
             for (let i = 1; i <= 44; i++) {
                 const artifact = document.createElement('div');
                 artifact.className = 'artifact';
@@ -1074,26 +1094,29 @@
                 
                 artifactsGrid.appendChild(artifact);
             }
+        }
+        
+        // Инициализация страницы
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Создаем библиотеку артефактов
+            createArtifactsLibrary();
             
             // Загружаем данные из Firebase
-            loadData((loadedPlayers) => {
-                players = loadedPlayers;
-                renderPlayers();
-            });
+            await loadData();
             
             // Настройка кнопок
             document.getElementById('resetBtn').addEventListener('click', resetData);
             document.getElementById('addPlayerBtn').addEventListener('click', addNewPlayer);
-            document.getElementById('saveBtn').addEventListener('click', saveToFirebase);
+            document.getElementById('saveBtn').addEventListener('click', saveData);
             
-            // Слушаем изменения в Firebase
+            // Слушаем изменения в Firebase в реальном времени
             database.ref('data').on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
                     players = data.players || createInitialPlayers();
                     document.getElementById('generalNotes').value = data.generalNotes || '';
                     renderPlayers();
-                    document.getElementById('lastSync').textContent = "загружены из Firebase";
+                    document.getElementById('lastSync').textContent = "данные синхронизированы";
                 }
             });
         });
